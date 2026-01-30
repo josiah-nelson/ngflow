@@ -11,4 +11,9 @@ message ExtendedFlowMessage {
   uint32 in_packets = 201;
   uint32 out_bytes = 202;
   uint32 out_packets = 203;
+
+  // Application telemetry (IPFIX 94/95/96)
+  uint32 application_id = 210;
+  string application_name = 211;
+  string application_description = 212;
 }

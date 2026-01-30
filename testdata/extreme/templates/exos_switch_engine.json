@@ -1,0 +1,22 @@
+{
+  "vendor": "Extreme Networks",
+  "platform": "EXOS Switch Engine",
+  "version": "33.5.2",
+  "protocols": ["NetFlow v9", "IPFIX", "sFlow"],
+  "fields": [
+    {"id": 8, "name": "sourceIPv4Address"},
+    {"id": 12, "name": "destinationIPv4Address"},
+    {"id": 10, "name": "ingressInterface"},
+    {"id": 14, "name": "egressInterface"},
+    {"id": 82, "name": "interfaceName", "source": "snmp"},
+    {"id": 83, "name": "interfaceDescription", "source": "snmp"},
+    {"id": 95, "name": "applicationId"},
+    {"id": 96, "name": "applicationName"},
+    {"id": 138, "name": "observationPointId"},
+    {"id": 149, "name": "observationDomainId"}
+  ],
+  "enterprise_fields": [
+    {"pen": 1916, "id": 5001, "name": "clearflowAction"},
+    {"pen": 1916, "id": 5002, "name": "clearflowRuleId"}
+  ]
+}

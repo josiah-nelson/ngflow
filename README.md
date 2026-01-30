@@ -45,6 +45,9 @@ ntopng is a free/commercial network traffic analysis console suitable for a vari
 - **Per-exporter dedup cache** with configurable TTL and size bounds
 - **Heuristics** to avoid false positives on long-lived flows
 
+### Vendor Exporters
+- **Extreme Networks** templates, gotchas, and SNMP enrichment guidance in [docs/extreme-networks.md](docs/extreme-networks.md)
+
 ## Installation
 
 ### Build From Source
@@ -104,6 +107,20 @@ ZMQ Configuration:
 Sampling Configuration:
       --disable-upscaling         Disable sampling rate upscaling (use when exporters pre-scale)
       --default-sample-rate=1     Default sampling rate when not reported by exporter
+
+Enrichment Configuration:
+      --snmp-enabled              Enable SNMP interface enrichment
+      --snmp-community="public"   SNMP community string
+      --snmp-port=161             SNMP port
+      --snmp-version="2c"         SNMP version (2c only)
+      --snmp-timeout=2s           SNMP timeout per request
+      --snmp-retries=1            SNMP retry count
+      --snmp-poll-interval=5m     SNMP interface poll interval
+
+nDPI Configuration:
+      --ndpi-enabled              Enable nDPI classification from application telemetry
+      --ndpi-categories="sip,video,audio,control"
+                                  Comma-separated list of allowed nDPI categories
 
 Deduplication Configuration:
       --dedup-enabled             Enable flow deduplication
@@ -171,6 +188,18 @@ netflow2ng -a 0.0.0.0:2055 \
   --dedup-enabled \
   --dedup-max-size 200000 \
   --dedup-ttl 120s
+```
+
+#### With SNMP Enrichment and nDPI Classification
+
+Enable SNMP interface metadata and constrained nDPI classification:
+
+```bash
+netflow2ng -a 0.0.0.0:2055 \
+  --snmp-enabled \
+  --snmp-community "public" \
+  --snmp-poll-interval 5m \
+  --ndpi-categories "sip,video,audio,control"
 ```
 
 #### High-Throughput Configuration

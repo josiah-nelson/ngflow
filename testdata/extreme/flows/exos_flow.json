@@ -1,0 +1,10 @@
+{
+  "exporter_ip": "192.0.2.10",
+  "observation_domain_id": 100,
+  "observation_point_id": 7,
+  "input_ifindex": 10,
+  "output_ifindex": 20,
+  "application_id": 5000,
+  "application_name": "SIP",
+  "ndpi_category": "sip"
+}
