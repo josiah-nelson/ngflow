@@ -45,6 +45,22 @@ ntopng is a free/commercial network traffic analysis console suitable for a vari
 - **Per-exporter dedup cache** with configurable TTL and size bounds
 - **Heuristics** to avoid false positives on long-lived flows
 
+### Vendor Support
+- **Extreme Networks** - Full support for X435, 5120 (Switch Engine), 5520 (Fabric Engine)
+  - EXOS/Switch Engine sFlow v5 with CLEAR-FLOW integration
+  - Fabric Engine IPFIX with observation domain semantics
+  - Enterprise-specific field parsing (Enterprise ID 1916)
+  - See [docs/extreme-networks.md](docs/extreme-networks.md) for configuration examples
+
+### Flow Enrichment
+- **SNMP interface metadata** - ifName, ifAlias, ifSpeed mapping from ifIndex
+- **L7 application classification** - Lightweight nDPI-style classification for:
+  - Voice (SIP, RTP, RTCP)
+  - Video/Audio streaming
+  - Control/Management (SSH, Telnet, SNMP)
+  - Network Services (DNS, DHCP, NTP)
+- **Vendor-specific enrichment** - Device type detection, observation domain interpretation
+
 ## Installation
 
 ### Build From Source
@@ -113,6 +129,13 @@ Deduplication Configuration:
 Queue Configuration:
       --queue-size=1000000        Packet queue size
 
+Enrichment Configuration:
+      --snmp-enabled              Enable SNMP interface enrichment
+      --snmp-community="public"   SNMP v2c community string
+      --snmp-poll-interval=5m     SNMP polling interval
+      --snmp-auto-discover        Auto-discover exporters for SNMP polling
+      --l7-enabled                Enable L7 application classification
+
 Logging:
   -l, --log-level="info"          Log level [error|warn|info|debug|trace]
       --log-format="default"      Log format [default|json]
@@ -172,6 +195,37 @@ netflow2ng -a 0.0.0.0:2055 \
   --dedup-max-size 200000 \
   --dedup-ttl 120s
 ```
+
+#### With SNMP Enrichment and L7 Classification
+
+Enable interface name/description enrichment and application classification:
+
+```bash
+netflow2ng -a 0.0.0.0:2055 \
+  --sflow-listen 0.0.0.0:6343 \
+  --snmp-enabled \
+  --snmp-community "your-community" \
+  --snmp-auto-discover \
+  --l7-enabled
+```
+
+#### Extreme Networks Configuration
+
+For Extreme Networks Switch Engine (sFlow) or Fabric Engine (IPFIX):
+
+```bash
+# Switch Engine / EXOS (sFlow)
+netflow2ng --sflow-listen 0.0.0.0:6343 \
+  --snmp-enabled --snmp-community public \
+  --l7-enabled
+
+# Fabric Engine (IPFIX)
+netflow2ng -a 0.0.0.0:2055 \
+  --snmp-enabled --snmp-community public \
+  --l7-enabled
+```
+
+See [docs/extreme-networks.md](docs/extreme-networks.md) for device configuration examples.
 
 #### High-Throughput Configuration
 
