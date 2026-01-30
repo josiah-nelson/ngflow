@@ -170,7 +170,7 @@ func (r *ExporterRegistry) RecordPacket(ip net.IP, sourceID uint32, bytes int) {
 	if r.metrics != nil {
 		labels := prometheus.Labels{
 			"exporter_ip": ip.String(),
-			"source_id":   string(rune(sourceID)),
+			"source_id":   strconv.FormatUint(uint64(sourceID), 10),
 		}
 		r.metrics.PacketsReceived.With(labels).Inc()
 		r.metrics.BytesReceived.With(labels).Add(float64(bytes))
