@@ -2,247 +2,177 @@
 
 This document covers vendor-specific support for Extreme Networks devices in netflow2ng.
 
-## Supported Devices
+> **Documentation Sources**: All configuration examples and default values in this document are derived from official Extreme Networks documentation. See references at the bottom.
 
-| Device/Platform | OS Version | Flow Protocol | Status |
-|-----------------|------------|---------------|--------|
-| X435 | EXOS 33.5+ / Switch Engine | sFlow v5 | Fully Supported |
-| 5120 | Switch Engine 33.5.x | sFlow v5 | Fully Supported |
-| 5520 | Fabric Engine 9.3.x | IPFIX | Fully Supported |
-| 5520 | Switch Engine 33.5.x | sFlow v5 | Fully Supported |
-| Legacy EXOS | EXOS 15.4+ | sFlow v5 | Supported |
+## Supported Platforms
+
+| Device | OS | Flow Protocol | Status |
+|--------|-----|---------------|--------|
+| X435 | ExtremeXOS 33.x (Value Edge license) | sFlow v5 | Supported |
+| 5120 | Switch Engine 33.5.x | sFlow v5 | Supported |
+| 5520 | Fabric Engine 9.3.x | IPFIX | Supported |
+| 5520 | Switch Engine 33.5.x | sFlow v5 | Supported |
 
 ## Quick Start
 
 ### Switch Engine / EXOS (sFlow)
 
 ```bash
-# Enable sFlow on your Extreme switch
+# On the switch
 enable sflow
 configure sflow agent ipaddress 10.0.0.1
-configure sflow collector 192.168.1.100 port 6343 vr "VR-Default"
-configure sflow sample-rate 1024
-enable sflow ports all both
+configure sflow collector 192.168.1.100 port 6343
+configure sflow sample-rate 4096
+enable sflow ports all
 
 # Start the collector
-netflow2ng --sflow-listen 0.0.0.0:6343 \
-  --snmp-enabled --snmp-community public \
-  --l7-enabled
+netflow2ng --sflow-listen 0.0.0.0:6343
 ```
 
 ### Fabric Engine (IPFIX)
 
 ```bash
-# Enable IPFIX on your 5520 Fabric Engine switch
+# On the switch
 enable
 configure terminal
 ip ipfix enable
 ip ipfix collector 1 192.168.1.100 exporter-ip 10.0.0.1 dest-port 2055
-ip ipfix template-refresh-time 300
-ip ipfix ports 1/1-1/48 ingress-and-egress
+ip ipfix ports 1/1-1/48 enable
 
 # Start the collector
-netflow2ng -a 0.0.0.0:2055 \
-  --snmp-enabled --snmp-community public \
-  --l7-enabled
+netflow2ng -a 0.0.0.0:2055
 ```
 
-## Features
+## Switch Engine / EXOS sFlow Configuration
 
-### SNMP Interface Enrichment
+### CLI Commands
 
-When SNMP polling is enabled, flows are enriched with:
+| Command | Description | Default |
+|---------|-------------|---------|
+| `enable sflow` | Enable sFlow globally | disabled |
+| `configure sflow agent ipaddress <ip>` | Set agent IP | none (required) |
+| `configure sflow collector <ip> port <port>` | Configure collector | port 6343 |
+| `configure sflow sample-rate <rate>` | Global sampling rate (1:N) | 4096 |
+| `configure sflow poll-interval <seconds>` | Counter polling interval | 20 seconds |
+| `enable sflow ports <port-list>` | Enable on ports | disabled |
 
-- **ifName**: Interface name (e.g., "1:1", "1/1/1")
-- **ifAlias**: User-configured interface description
-- **ifSpeed**: Interface speed in Mbps
-- **sysName**: Device hostname
+### Documented Defaults
 
-Configuration:
-```bash
-netflow2ng --snmp-enabled \
-  --snmp-community "your-community" \
-  --snmp-poll-interval 5m \
-  --snmp-auto-discover
-```
+- **sFlow version**: 5 (per RFC 3176)
+- **Polling interval**: 20 seconds (range: 0-300, 0 disables)
+- **Sampling rate**: 1:4096
+- **UDP port**: 6343
 
-### L7 Application Classification
+### Notes
 
-Limited L7 classification focused on specific traffic categories:
+- Counter polling is distributed over the interval (not all ports at once)
+- Per-port sampling rate can override global: `configure sflow ports <port> sample-rate <rate>`
+- Disabling global sFlow disables all ports
 
-| Category | Protocols |
-|----------|-----------|
-| Voice | SIP, RTP, RTCP |
-| Video | RTP (video streams) |
-| Audio | RTP (audio streams) |
-| Control | SSH, Telnet, SNMP |
-| Network Services | DNS, DHCP, NTP |
+## Fabric Engine IPFIX Configuration
 
-Enable with:
-```bash
-netflow2ng --l7-enabled
-```
+### CLI Commands
 
-### CLEAR-FLOW Integration
+| Command | Description | Default |
+|---------|-------------|---------|
+| `ip ipfix enable` | Enable IPFIX globally | disabled |
+| `ip ipfix collector <id> <ip> exporter-ip <ip> dest-port <port>` | Configure collector | none |
+| `ip ipfix slot <slot> aging-interval <seconds>` | Flow aging timeout | 30 seconds |
+| `ip ipfix export-interval <seconds>` | Export interval | varies |
+| `ip ipfix template-refresh-interval <seconds>` | Template refresh | 1800 (30 min) |
+| `ip ipfix ports <port-list> enable` | Enable on ports | disabled |
 
-CLEAR-FLOW ACL-based sampling is supported for selective traffic monitoring:
+### Documented Defaults
 
-1. Configure CLEAR-FLOW rules on your EXOS switch
-2. Enable sFlow mirroring in CLEAR-FLOW actions
-3. The collector parses enterprise-specific sFlow records (Enterprise ID 1916)
+- **Aging interval**: 30 seconds (range: 0-2,147,400)
+- **Template refresh**: 1,800 seconds (also refreshes every 10,000 packets)
+- **Max collectors**: 2 (data not load balanced between them)
 
-Example CLEAR-FLOW policy:
-```
-entry voip_traffic {
-    if match all {
-        protocol udp;
-        destination-port 5060;
-    } then {
-        count voip_counter;
-        mirror-destination 1;
-    }
-}
-```
+### Limitations (per vendor documentation)
 
-## Configuration Examples
+- **IPv4 only**: IPFIX monitors IPv4 traffic flows only
+- **Ingress only**: Only ingress sampling is supported
+- **Mac-in-Mac**: Traversing flows (L2 only) are not captured
+- **L3 VSN**: Flows on NNI ports are not learned
 
-### Basic sFlow (Switch Engine)
+## Validation Checklist
 
-```
-enable sflow
-configure sflow agent ipaddress 10.0.0.1
-configure sflow collector 192.168.1.100 port 6343 vr "VR-Default"
-configure sflow sample-rate 1024
-configure sflow poll-interval 30
-enable sflow ports all both
-```
+Use this checklist to verify flow export is working correctly.
 
-### Basic IPFIX (Fabric Engine)
+### Connectivity
+- [ ] Collector IP is reachable from switch (`ping <collector-ip>`)
+- [ ] Correct VR/VRF specified (EXOS: verify with `show vr`)
+- [ ] UDP port not blocked by ACLs
 
-```
-enable
-configure terminal
-ip ipfix enable
-ip ipfix collector 1 192.168.1.100 exporter-ip 10.0.0.1 dest-port 2055
-ip ipfix observation-domain 1
-ip ipfix template-refresh-time 300
-ip ipfix options-template-refresh-time 300
-ip ipfix ports 1/1-1/48 ingress-and-egress
-```
+### Template Reception (IPFIX)
+- [ ] Templates received before data (check `/templates` endpoint)
+- [ ] Template contains expected fields (source/dest IP, protocol, bytes)
+- [ ] Template refresh interval is reasonable (<= 300s recommended)
 
-### Optimized for X435 (Edge Switch)
+### Sampling Rate
+- [ ] Sampling rate visible to collector (`/sampling` endpoint)
+- [ ] sFlow: Rate in datagram header (automatic)
+- [ ] IPFIX: Rate in options template (may need configuration)
 
-```
-enable sflow
-configure sflow agent ipaddress 10.0.0.100
-configure sflow collector 192.168.1.100 port 6343 vr "VR-Mgmt"
-configure sflow sample-rate 2048
-configure sflow poll-interval 60
-enable sflow backoff-threshold
-configure sflow backoff-threshold 200
-enable sflow ports 1:49,1:50 both
-```
+### Observation Domain
+- [ ] Observation domain ID is consistent
+- [ ] Stack members identified via sub-agent ID (EXOS)
 
-## Known Issues and Gotchas
-
-### sFlow (EXOS / Switch Engine)
-
-| Issue | Severity | Description | Workaround |
-|-------|----------|-------------|------------|
-| EXOS-SFLOW-001 | High | EXOS < 15.4 only supports egress sFlow | Upgrade to 15.4+ |
-| EXOS-SFLOW-002 | Medium | Sampling rate is per-port, not per-interface | Use per-port configuration |
-| EXOS-SFLOW-003 | Medium | Backoff throttles sampling under load | Adjust backoff-threshold |
-| EXOS-SFLOW-005 | Medium | Interface numbers may differ from SNMP ifIndex | Enable SNMP enrichment |
-
-### IPFIX (Fabric Engine)
-
-| Issue | Severity | Description | Workaround |
-|-------|----------|-------------|------------|
-| FE-IPFIX-001 | High | IPFIX must be explicitly enabled globally | Run `ip ipfix enable` |
-| FE-IPFIX-002 | Medium | Templates sent infrequently (30 min default) | Set template-refresh-time 300 |
-| FE-IPFIX-003 | Medium | Sampling rate in options templates only | Track options templates |
-| FE-IPFIX-005 | Medium | LAG reports member port, not LAG ifIndex | Use SNMP for LAG mapping |
-
-### General
-
-| Issue | Severity | Description | Workaround |
-|-------|----------|-------------|------------|
-| COMPAT-001 | Info | 5520 can run Switch Engine or Fabric Engine | Check OS with `show system` |
-| COMPAT-002 | Medium | VR affects flow export reachability | Specify correct VR in config |
-| COMPAT-003 | Low | X435 has limited resources | Use conservative sampling |
-
-## Observation Domain Semantics
-
-### Fabric Engine
-- Default domain (0): GlobalRouter VRF
-- Non-zero: Maps to VRF ID (configured via `ip ipfix observation-domain`)
-
-### Switch Engine / EXOS
-- Default (0): Single switch or stack primary
-- Non-zero: Stack member number (sub-agent ID)
-
-## Template Reference
-
-### Fabric Engine IPFIX IPv4 Template (ID 256)
-
-| Field | ID | Length | Description |
-|-------|----|--------|-------------|
-| sourceIPv4Address | 8 | 4 | Source IP |
-| destinationIPv4Address | 12 | 4 | Destination IP |
-| ipNextHopIPv4Address | 15 | 4 | Next hop |
-| ingressInterface | 10 | 4 | Input ifIndex |
-| egressInterface | 14 | 4 | Output ifIndex |
-| packetDeltaCount | 2 | 8 | Packet count |
-| octetDeltaCount | 1 | 8 | Byte count |
-| flowStartMilliseconds | 152 | 8 | Flow start time |
-| flowEndMilliseconds | 153 | 8 | Flow end time |
-| sourceTransportPort | 7 | 2 | Source port |
-| destinationTransportPort | 11 | 2 | Destination port |
-| tcpControlBits | 6 | 1 | TCP flags |
-| protocolIdentifier | 4 | 1 | IP protocol |
-| ipClassOfService | 5 | 1 | ToS/DSCP |
-| samplingInterval | 34 | 4 | Sampling rate |
-
-### Enterprise-Specific sFlow Records (Enterprise ID 1916)
-
-| Format | ID | Description |
-|--------|----|-------------|
-| ExtremeSwitchData | 1 | Extended switch statistics |
-| ExtremeClearFlowData | 2 | CLEAR-FLOW match information |
-| ExtremeAppTelemetry | 3 | Application telemetry data |
-| ExtremeQueueStats | 4 | Queue statistics |
-| ExtremePortStats | 5 | Extended port statistics |
+### Exporter Identification
+- [ ] Exporter IP appears in flow records (samplerAddress)
+- [ ] SNMP sysDescr available (for device type detection)
 
 ## Troubleshooting
 
 ### No flows received
 
 1. Verify connectivity: `ping <collector-ip>` from switch
-2. Check VR: Ensure collector is reachable via configured VR
-3. Verify ports: Check UDP port is open (default: 6343 sFlow, 2055 IPFIX)
-4. Check status: `show sflow` or `show ip ipfix`
+2. Check VR (EXOS): Ensure collector is reachable via specified VR
+3. Verify UDP port not blocked
+4. Check enable status: `show sflow` or `show ip ipfix`
 
-### Missing interface names
+### IPFIX template not decoded
 
-1. Enable SNMP on the switch
-2. Configure community string to match collector
-3. Enable SNMP enrichment: `--snmp-enabled --snmp-community <community>`
-4. Wait for initial poll (up to 5 minutes)
+1. Wait for template (default: up to 30 minutes)
+2. Reduce template refresh: `ip ipfix template-refresh-interval 300`
+3. Check `/templates` endpoint on collector
 
-### Sampling rate not detected
+### Sampling rate incorrect
 
-1. For sFlow: Rate is in datagram header (automatic)
-2. For IPFIX: Check options template export is enabled
-3. Use manual override if needed: `--sampling-rate 1024`
+1. sFlow: Rate is in datagram header (automatic)
+2. IPFIX: Check options template export is enabled
+3. Use manual override if needed: `--default-sample-rate <rate>`
 
-### Template decode errors (IPFIX)
+## IANA Information Element IDs
 
-1. Reduce template refresh interval on switch
-2. Collector caches templates; wait for next template
-3. Check logs for template ID mismatches
+These are standard IETF-defined field IDs exported by Fabric Engine:
+
+| ID | Name | Description |
+|----|------|-------------|
+| 1 | octetDeltaCount | Total bytes |
+| 2 | packetDeltaCount | Total packets |
+| 4 | protocolIdentifier | IP protocol |
+| 7 | sourceTransportPort | L4 source port |
+| 8 | sourceIPv4Address | IPv4 source |
+| 10 | ingressInterface | Input ifIndex |
+| 11 | destinationTransportPort | L4 dest port |
+| 12 | destinationIPv4Address | IPv4 dest |
+| 14 | egressInterface | Output ifIndex |
+| 152 | flowStartMilliseconds | Flow start (ms since epoch) |
+| 153 | flowEndMilliseconds | Flow end (ms since epoch) |
+
+Full list: https://www.iana.org/assignments/ipfix/ipfix.xhtml
 
 ## References
 
-- [ExtremeXOS User Guide - sFlow](https://documentation.extremenetworks.com/exos_33.1/GUID-B01E96DB-4365-42AA-8E3F-29DB1E1A38F4.shtml)
+### Official Documentation
+
 - [Fabric Engine User Guide - IPFIX](https://documentation.extremenetworks.com/FABRICENGINE/SW/810/FabricEngineUserGuide/GUID-844D127A-E959-4177-BD0B-BA73ED623F65.shtml)
-- [5520 Hardware Installation Guide](https://documentation.extremenetworks.com/wired/5520/GUID-4E57A54C-1A9B-4876-94D7-65685F97E7E9.shtml)
+- [ExtremeXOS User Guide - sFlow](https://documentation.extremenetworks.com/exos_32.7.1/GUID-C22DF001-16D7-4B6D-8044-DB4ECAAEDC85.shtml)
+- [X435 Product Page](https://www.extremenetworks.com/products/switches/extremexos-switches/x435)
+- [IANA IPFIX Registry](https://www.iana.org/assignments/ipfix/ipfix.xhtml)
+
+### Extreme Enterprise ID
+
+- **IANA Private Enterprise Number**: 1916
+- **Registry**: https://www.iana.org/assignments/enterprise-numbers/
