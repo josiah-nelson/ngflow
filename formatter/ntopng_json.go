@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/netsampler/goflow2/v2/decoders/netflow"
-	"github.com/synfinatic/netflow2ng/proto"
+	"github.com/josiah-nelson/ngflow/proto"
 )
 
 type NtopngJson struct {
@@ -52,6 +52,7 @@ func (d *NtopngJson) toJSON(extFlow *proto.ExtendedFlowMessage) ([]byte, error) 
 	hwaddr := make(net.HardwareAddr, 6)
 	_hwaddr := make([]byte, binary.MaxVarintLen64)
 	var icmp_type uint16
+	var exporterIP net.IP
 	retmap := make(map[string]interface{})
 	// goflow2 FlowMessage protobuf is embedded in ExtendedFlowMessage
 	baseFlow := extFlow.BaseFlow
@@ -141,9 +142,62 @@ func (d *NtopngJson) toJSON(extFlow *proto.ExtendedFlowMessage) ([]byte, error) 
 	if len(baseFlow.SamplerAddress) == 4 {
 		copy(ip4, baseFlow.SamplerAddress)
 		retmap[strconv.Itoa(netflow.IPFIX_FIELD_exporterIPv4Address)] = ip4.String()
+		exporterIP = append(net.IP(nil), ip4...)
 	} else if len(baseFlow.SamplerAddress) == 16 {
 		copy(ip6, baseFlow.SamplerAddress)
 		retmap[strconv.Itoa(netflow.IPFIX_FIELD_exporterIPv6Address)] = ip6.String()
+		exporterIP = append(net.IP(nil), ip6...)
+	}
+
+	// Observation point/domain
+	if baseFlow.ObservationDomainId != 0 {
+		retmap[strconv.Itoa(netflow.IPFIX_FIELD_observationDomainId)] = baseFlow.ObservationDomainId
+	}
+	if baseFlow.ObservationPointId != 0 {
+		retmap[strconv.Itoa(netflow.IPFIX_FIELD_observationPointId)] = baseFlow.ObservationPointId
+	}
+
+	// Application telemetry (IPFIX)
+	if extFlow.ApplicationId != 0 {
+		retmap[strconv.Itoa(netflow.IPFIX_FIELD_applicationId)] = extFlow.ApplicationId
+	}
+	if extFlow.ApplicationName != "" {
+		retmap[strconv.Itoa(netflow.IPFIX_FIELD_applicationName)] = extFlow.ApplicationName
+	}
+	if extFlow.ApplicationDescription != "" {
+		retmap[strconv.Itoa(netflow.IPFIX_FIELD_applicationDescription)] = extFlow.ApplicationDescription
+	}
+
+	if classification, ok := classifyFlow(extFlow.ApplicationName, baseFlow); ok {
+		retmap["ndpi.protocol"] = classification.Protocol
+		retmap["ndpi.category"] = classification.Category
+		if classification.Confidence > 0 {
+			retmap["ndpi.confidence"] = classification.Confidence
+		}
+	}
+
+	inMeta, outMeta, inOk, outOk := enrichInterfaces(exporterIP, baseFlow.InIf, baseFlow.OutIf)
+	if inOk {
+		if inMeta.Name != "" {
+			retmap["in_ifName"] = inMeta.Name
+		}
+		if inMeta.Alias != "" {
+			retmap["in_ifAlias"] = inMeta.Alias
+		}
+		if inMeta.SpeedBps > 0 {
+			retmap["in_ifSpeed"] = inMeta.SpeedBps
+		}
+	}
+	if outOk {
+		if outMeta.Name != "" {
+			retmap["out_ifName"] = outMeta.Name
+		}
+		if outMeta.Alias != "" {
+			retmap["out_ifAlias"] = outMeta.Alias
+		}
+		if outMeta.SpeedBps > 0 {
+			retmap["out_ifSpeed"] = outMeta.SpeedBps
+		}
 	}
 
 	// convert to JSON

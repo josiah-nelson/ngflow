@@ -1,0 +1,24 @@
+{
+  "vendor": "Extreme Networks",
+  "platform": "Fabric Engine",
+  "version": "9.3.1.0",
+  "protocols": ["IPFIX", "sFlow"],
+  "fields": [
+    {"id": 8, "name": "sourceIPv4Address"},
+    {"id": 12, "name": "destinationIPv4Address"},
+    {"id": 27, "name": "sourceIPv6Address"},
+    {"id": 28, "name": "destinationIPv6Address"},
+    {"id": 10, "name": "ingressInterface"},
+    {"id": 14, "name": "egressInterface"},
+    {"id": 82, "name": "interfaceName", "source": "snmp"},
+    {"id": 83, "name": "interfaceDescription", "source": "snmp"},
+    {"id": 95, "name": "applicationId"},
+    {"id": 96, "name": "applicationName"},
+    {"id": 138, "name": "observationPointId"},
+    {"id": 149, "name": "observationDomainId"}
+  ],
+  "enterprise_fields": [
+    {"pen": 1916, "id": 5201, "name": "fabricSegmentId"},
+    {"pen": 1916, "id": 5202, "name": "fabricIsid"}
+  ]
+}

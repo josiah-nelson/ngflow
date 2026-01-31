@@ -26,12 +26,16 @@ type ExtendedFlowMessage struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	BaseFlow *pb.FlowMessage        `protobuf:"bytes,1,opt,name=base_flow,json=baseFlow,proto3" json:"base_flow,omitempty"`
 	// remapped in_out bytes & packets
-	InBytes       uint32 `protobuf:"varint,200,opt,name=in_bytes,json=inBytes,proto3" json:"in_bytes,omitempty"`
-	InPackets     uint32 `protobuf:"varint,201,opt,name=in_packets,json=inPackets,proto3" json:"in_packets,omitempty"`
-	OutBytes      uint32 `protobuf:"varint,202,opt,name=out_bytes,json=outBytes,proto3" json:"out_bytes,omitempty"`
-	OutPackets    uint32 `protobuf:"varint,203,opt,name=out_packets,json=outPackets,proto3" json:"out_packets,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	InBytes    uint32 `protobuf:"varint,200,opt,name=in_bytes,json=inBytes,proto3" json:"in_bytes,omitempty"`
+	InPackets  uint32 `protobuf:"varint,201,opt,name=in_packets,json=inPackets,proto3" json:"in_packets,omitempty"`
+	OutBytes   uint32 `protobuf:"varint,202,opt,name=out_bytes,json=outBytes,proto3" json:"out_bytes,omitempty"`
+	OutPackets uint32 `protobuf:"varint,203,opt,name=out_packets,json=outPackets,proto3" json:"out_packets,omitempty"`
+	// Application telemetry (IPFIX 94/95/96)
+	ApplicationId          uint32 `protobuf:"varint,210,opt,name=application_id,json=applicationId,proto3" json:"application_id,omitempty"`
+	ApplicationName        string `protobuf:"bytes,211,opt,name=application_name,json=applicationName,proto3" json:"application_name,omitempty"`
+	ApplicationDescription string `protobuf:"bytes,212,opt,name=application_description,json=applicationDescription,proto3" json:"application_description,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ExtendedFlowMessage) Reset() {
@@ -99,11 +103,32 @@ func (x *ExtendedFlowMessage) GetOutPackets() uint32 {
 	return 0
 }
 
+func (x *ExtendedFlowMessage) GetApplicationId() uint32 {
+	if x != nil {
+		return x.ApplicationId
+	}
+	return 0
+}
+
+func (x *ExtendedFlowMessage) GetApplicationName() string {
+	if x != nil {
+		return x.ApplicationName
+	}
+	return ""
+}
+
+func (x *ExtendedFlowMessage) GetApplicationDescription() string {
+	if x != nil {
+		return x.ApplicationDescription
+	}
+	return ""
+}
+
 var File_extended_flow_proto protoreflect.FileDescriptor
 
 const file_extended_flow_proto_rawDesc = "" +
 	"\n" +
-	"\x13extended_flow.proto\x12\x05proto\x1a\rpb/flow.proto\"\xc3\x01\n" +
+	"\x13extended_flow.proto\x12\x05proto\x1a\rpb/flow.proto\"\xd1\x02\n" +
 	"\x13ExtendedFlowMessage\x120\n" +
 	"\tbase_flow\x18\x01 \x01(\v2\x13.flowpb.FlowMessageR\bbaseFlow\x12\x1a\n" +
 	"\bin_bytes\x18\xc8\x01 \x01(\rR\ainBytes\x12\x1e\n" +
@@ -111,7 +136,10 @@ const file_extended_flow_proto_rawDesc = "" +
 	"in_packets\x18\xc9\x01 \x01(\rR\tinPackets\x12\x1c\n" +
 	"\tout_bytes\x18\xca\x01 \x01(\rR\boutBytes\x12 \n" +
 	"\vout_packets\x18\xcb\x01 \x01(\rR\n" +
-	"outPacketsB.Z,github.com/synfinatic/netflow2ng/proto;protob\x06proto3"
+	"outPackets\x12&\n" +
+	"\x0eapplication_id\x18\xd2\x01 \x01(\rR\rapplicationId\x12*\n" +
+	"\x10application_name\x18\xd3\x01 \x01(\tR\x0fapplicationName\x128\n" +
+	"\x17application_description\x18\xd4\x01 \x01(\tR\x16applicationDescriptionB.Z,github.com/josiah-nelson/ngflow/proto;protob\x06proto3"
 
 var (
 	file_extended_flow_proto_rawDescOnce sync.Once

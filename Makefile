@@ -1,5 +1,5 @@
 PROJECT_VERSION := 0.2.2
-DOCKER_REPO     := synfinatic
+DOCKER_REPO     := josiah-nelson
 PROJECT_NAME    := netflow2ng
 
 DIST_DIR ?= dist/

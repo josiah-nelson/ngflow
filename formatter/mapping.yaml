@@ -27,3 +27,11 @@ netflowv9:
       destination: out_bytes
     - field: 24
       destination: out_packets
+ipfix:
+  mapping:
+    - field: 94
+      destination: application_description
+    - field: 95
+      destination: application_id
+    - field: 96
+      destination: application_name

@@ -1,0 +1,10 @@
+{
+  "exporter_ip": "192.0.2.20",
+  "observation_domain_id": 200,
+  "observation_point_id": 3,
+  "input_ifindex": 101,
+  "output_ifindex": 202,
+  "application_id": 7000,
+  "application_name": "RTSP",
+  "ndpi_category": "video"
+}

@@ -1,6 +1,6 @@
 syntax = "proto3";
 package proto;
-option go_package = "github.com/synfinatic/netflow2ng/proto;proto";
+option go_package = "github.com/josiah-nelson/ngflow/proto;proto";
 import "pb/flow.proto";  // relative path from ~/go/pkg/mod/github.com/netsampler/goflow2/v2 used in Makefile
 
 message ExtendedFlowMessage {
@@ -11,4 +11,9 @@ message ExtendedFlowMessage {
   uint32 in_packets = 201;
   uint32 out_bytes = 202;
   uint32 out_packets = 203;
+
+  // Application telemetry (IPFIX 94/95/96)
+  uint32 application_id = 210;
+  string application_name = 211;
+  string application_description = 212;
 }

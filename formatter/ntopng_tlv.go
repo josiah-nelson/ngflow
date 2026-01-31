@@ -36,7 +36,7 @@ import (
 	"reflect"
 
 	"github.com/netsampler/goflow2/v2/decoders/netflow"
-	"github.com/synfinatic/netflow2ng/proto"
+	"github.com/josiah-nelson/ngflow/proto"
 )
 
 // Taken From ntop nDPI's ndpi_typedefs.h. We're only using a subset.
@@ -59,10 +59,9 @@ const (
 	//ndpi_serialization_end_of_list    uint8= 15
 )
 
-// According to the nDPI library, key's can only be uint32 or string. But for our use all keys
-// will be from netflow/nfv9.go, so always uint16.
+// According to the nDPI library, key's can only be uint32 or string.
 type ndpiItem struct {
-	Key   uint16
+	Key   interface{}
 	Value interface{}
 }
 
@@ -108,6 +107,7 @@ func (d *NtopngTlv) toTLV(extFlow *proto.ExtendedFlowMessage) ([]byte, error) {
 	hwaddr := make(net.HardwareAddr, 6)
 	_hwaddr := make([]byte, binary.MaxVarintLen64)
 	var icmp_type uint16
+	var exporterIP net.IP
 	var items []ndpiItem
 	// goflow2 FlowMessage protobuf is embedded in ExtendedFlowMessage
 	baseFlow := extFlow.BaseFlow
@@ -209,9 +209,62 @@ func (d *NtopngTlv) toTLV(extFlow *proto.ExtendedFlowMessage) ([]byte, error) {
 	if len(baseFlow.SamplerAddress) == 4 {
 		copy(ip4, baseFlow.SamplerAddress)
 		items = append(items, ndpiItem{Key: netflow.IPFIX_FIELD_exporterIPv4Address, Value: ip4.String()})
+		exporterIP = append(net.IP(nil), ip4...)
 	} else if len(baseFlow.SamplerAddress) == 16 {
 		copy(ip6, baseFlow.SamplerAddress)
 		items = append(items, ndpiItem{Key: netflow.IPFIX_FIELD_exporterIPv6Address, Value: ip6.String()})
+		exporterIP = append(net.IP(nil), ip6...)
+	}
+
+	// Observation point/domain
+	if baseFlow.ObservationDomainId != 0 {
+		items = append(items, ndpiItem{Key: netflow.IPFIX_FIELD_observationDomainId, Value: baseFlow.ObservationDomainId})
+	}
+	if baseFlow.ObservationPointId != 0 {
+		items = append(items, ndpiItem{Key: netflow.IPFIX_FIELD_observationPointId, Value: baseFlow.ObservationPointId})
+	}
+
+	// Application telemetry (IPFIX)
+	if extFlow.ApplicationId != 0 {
+		items = append(items, ndpiItem{Key: netflow.IPFIX_FIELD_applicationId, Value: extFlow.ApplicationId})
+	}
+	if extFlow.ApplicationName != "" {
+		items = append(items, ndpiItem{Key: netflow.IPFIX_FIELD_applicationName, Value: extFlow.ApplicationName})
+	}
+	if extFlow.ApplicationDescription != "" {
+		items = append(items, ndpiItem{Key: netflow.IPFIX_FIELD_applicationDescription, Value: extFlow.ApplicationDescription})
+	}
+
+	if classification, ok := classifyFlow(extFlow.ApplicationName, baseFlow); ok {
+		items = append(items, ndpiItem{Key: "ndpi.protocol", Value: classification.Protocol})
+		items = append(items, ndpiItem{Key: "ndpi.category", Value: classification.Category})
+		if classification.Confidence > 0 {
+			items = append(items, ndpiItem{Key: "ndpi.confidence", Value: classification.Confidence})
+		}
+	}
+
+	inMeta, outMeta, inOk, outOk := enrichInterfaces(exporterIP, baseFlow.InIf, baseFlow.OutIf)
+	if inOk {
+		if inMeta.Name != "" {
+			items = append(items, ndpiItem{Key: "in_ifName", Value: inMeta.Name})
+		}
+		if inMeta.Alias != "" {
+			items = append(items, ndpiItem{Key: "in_ifAlias", Value: inMeta.Alias})
+		}
+		if inMeta.SpeedBps > 0 {
+			items = append(items, ndpiItem{Key: "in_ifSpeed", Value: inMeta.SpeedBps})
+		}
+	}
+	if outOk {
+		if outMeta.Name != "" {
+			items = append(items, ndpiItem{Key: "out_ifName", Value: outMeta.Name})
+		}
+		if outMeta.Alias != "" {
+			items = append(items, ndpiItem{Key: "out_ifAlias", Value: outMeta.Alias})
+		}
+		if outMeta.SpeedBps > 0 {
+			items = append(items, ndpiItem{Key: "out_ifSpeed", Value: outMeta.SpeedBps})
+		}
 	}
 
 	// Serialize and make a flow record.
@@ -272,9 +325,32 @@ func serializeTlvItem(item ndpiItem) ([]byte, error) {
 	var minBytes []byte
 	var err error
 
-	keyType, minBytes = minimalBytesUint(uint64(item.Key))
-	if err = binary.Write(buf, binary.BigEndian, minBytes); err != nil {
-		return nil, err
+	switch k := item.Key.(type) {
+	case string:
+		keyType = ndpi_serialization_string
+		strLen := uint16(len(k))
+		if err = binary.Write(buf, binary.BigEndian, strLen); err != nil {
+			return nil, err
+		}
+		if _, err = buf.Write([]byte(k)); err != nil {
+			return nil, err
+		}
+	case int, int8, int16, int32, int64:
+		intValue := reflect.ValueOf(k).Int()
+		if intValue < 0 {
+			return nil, fmt.Errorf("negative key type %T", item.Key)
+		}
+		keyType, minBytes = minimalBytesUint(uint64(intValue))
+		if err = binary.Write(buf, binary.BigEndian, minBytes); err != nil {
+			return nil, err
+		}
+	case uint, uint8, uint16, uint32, uint64:
+		keyType, minBytes = minimalBytesUint(reflect.ValueOf(k).Uint())
+		if err = binary.Write(buf, binary.BigEndian, minBytes); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unknown key type %T", item.Key)
 	}
 
 	switch v := item.Value.(type) {
@@ -301,8 +377,8 @@ func serializeTlvItem(item ndpiItem) ([]byte, error) {
 		}
 
 	default:
-		return nil, fmt.Errorf("unknown value type for key: %s. Type was: %T",
-			netflow.NFv9TypeToString(uint16(item.Key)), item.Value)
+		return nil, fmt.Errorf("unknown value type for key %v. Type was: %T",
+			item.Key, item.Value)
 	}
 
 	// Write types byte first

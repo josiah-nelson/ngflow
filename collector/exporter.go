@@ -2,6 +2,7 @@ package collector
 
 import (
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -186,7 +187,7 @@ func (r *ExporterRegistry) RecordFlows(ip net.IP, sourceID uint32, count int) {
 	if r.metrics != nil {
 		labels := prometheus.Labels{
 			"exporter_ip": ip.String(),
-			"source_id":   string(rune(sourceID)),
+			"source_id":   strconv.FormatUint(uint64(sourceID), 10),
 		}
 		r.metrics.FlowsProcessed.With(labels).Add(float64(count))
 	}
@@ -200,7 +201,7 @@ func (r *ExporterRegistry) RecordError(ip net.IP, sourceID uint32) {
 	if r.metrics != nil {
 		labels := prometheus.Labels{
 			"exporter_ip": ip.String(),
-			"source_id":   string(rune(sourceID)),
+			"source_id":   strconv.FormatUint(uint64(sourceID), 10),
 		}
 		r.metrics.Errors.With(labels).Inc()
 	}

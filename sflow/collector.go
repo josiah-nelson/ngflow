@@ -10,8 +10,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	flowpb "github.com/netsampler/goflow2/v2/pb"
-	"github.com/synfinatic/netflow2ng/collector"
-	"github.com/synfinatic/netflow2ng/sampling"
+	"github.com/josiah-nelson/ngflow/collector"
+	"github.com/josiah-nelson/ngflow/sampling"
 )
 
 // SFlowCollector handles sFlow v5 packet collection
