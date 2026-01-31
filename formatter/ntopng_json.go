@@ -6,8 +6,8 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/netsampler/goflow2/v2/decoders/netflow"
 	"github.com/josiah-nelson/ngflow/proto"
+	"github.com/netsampler/goflow2/v2/decoders/netflow"
 )
 
 type NtopngJson struct {
@@ -22,18 +22,12 @@ func (d *NtopngJson) Init() error {
 }
 
 func (d *NtopngJson) Format(data interface{}) ([]byte, []byte, error) {
-	// The Transport might use "key", but we don't care about it here.
-	var key []byte
-	if dataIf, ok := data.(interface{ Key() []byte }); ok {
-		key = dataIf.Key()
-	}
-
-	extFlowMsg, err := castToExtendedFlowMsg(data)
+	key, extFlowMsg, _, extras, err := extractFlow(data)
 	if err != nil {
 		return key, nil, err
 	}
 
-	jdata, err := d.toJSON(extFlowMsg)
+	jdata, err := d.toJSON(extFlowMsg, extras)
 	if err != nil {
 		return key, nil, err
 	}
@@ -46,25 +40,27 @@ func (d *NtopngJson) Format(data interface{}) ([]byte, []byte, error) {
  * ExtendedFlowMessage is our protobuf message that contains the remapped IN/OUT fields
  * using Formatter.MappingYamlStr
  */
-func (d *NtopngJson) toJSON(extFlow *proto.ExtendedFlowMessage) ([]byte, error) {
+func (d *NtopngJson) toJSON(extFlow *proto.ExtendedFlowMessage, extras map[string]interface{}) ([]byte, error) {
 	ip6 := make(net.IP, net.IPv6len)
 	ip4 := make(net.IP, net.IPv4len)
 	hwaddr := make(net.HardwareAddr, 6)
 	_hwaddr := make([]byte, binary.MaxVarintLen64)
 	var icmp_type uint16
 	var exporterIP net.IP
-	retmap := make(map[string]interface{})
+	retmap := make(map[string]interface{}, 64)
 	// goflow2 FlowMessage protobuf is embedded in ExtendedFlowMessage
 	baseFlow := extFlow.BaseFlow
+
+	inBytes, inPackets, outBytes, outPackets := resolveCounters(extFlow)
 
 	// Stats + direction
 	// goflow2 only supports unidirectional flows. There is no Direction field and only one
 	// Bytes/Packets field. Data flow is always Src -> Dst.
 	retmap[strconv.Itoa(netflow.NFV9_FIELD_DIRECTION)] = 0
-	retmap[strconv.Itoa(netflow.NFV9_FIELD_IN_BYTES)] = extFlow.InBytes
-	retmap[strconv.Itoa(netflow.NFV9_FIELD_IN_PKTS)] = extFlow.InPackets
-	retmap[strconv.Itoa(netflow.NFV9_FIELD_OUT_BYTES)] = extFlow.OutBytes
-	retmap[strconv.Itoa(netflow.NFV9_FIELD_OUT_PKTS)] = extFlow.OutPackets
+	retmap[strconv.Itoa(netflow.NFV9_FIELD_IN_BYTES)] = inBytes
+	retmap[strconv.Itoa(netflow.NFV9_FIELD_IN_PKTS)] = inPackets
+	retmap[strconv.Itoa(netflow.NFV9_FIELD_OUT_BYTES)] = outBytes
+	retmap[strconv.Itoa(netflow.NFV9_FIELD_OUT_PKTS)] = outPackets
 	// Goflow2 protobuf provides time in ns, but it ntopng expects time in seconds.
 	retmap[strconv.Itoa(netflow.NFV9_FIELD_FIRST_SWITCHED)] =
 		uint32(baseFlow.TimeFlowStartNs / 1_000_000_000)
@@ -168,12 +164,13 @@ func (d *NtopngJson) toJSON(extFlow *proto.ExtendedFlowMessage) ([]byte, error) 
 		retmap[strconv.Itoa(netflow.IPFIX_FIELD_applicationDescription)] = extFlow.ApplicationDescription
 	}
 
-	if classification, ok := classifyFlow(extFlow.ApplicationName, baseFlow); ok {
+	if classification, ok := classifyFlow(extFlow.ApplicationName, extFlow.ApplicationDescription, baseFlow); ok {
 		retmap["ndpi.protocol"] = classification.Protocol
 		retmap["ndpi.category"] = classification.Category
 		if classification.Confidence > 0 {
 			retmap["ndpi.confidence"] = classification.Confidence
 		}
+		addQoSMetrics(retmap, classification, inBytes+outBytes, inPackets+outPackets, baseFlow.TimeFlowStartNs, baseFlow.TimeFlowEndNs)
 	}
 
 	inMeta, outMeta, inOk, outOk := enrichInterfaces(exporterIP, baseFlow.InIf, baseFlow.OutIf)
@@ -197,6 +194,12 @@ func (d *NtopngJson) toJSON(extFlow *proto.ExtendedFlowMessage) ([]byte, error) 
 		}
 		if outMeta.SpeedBps > 0 {
 			retmap["out_ifSpeed"] = outMeta.SpeedBps
+		}
+	}
+
+	if len(extras) > 0 {
+		for k, v := range extras {
+			retmap[k] = v
 		}
 	}
 

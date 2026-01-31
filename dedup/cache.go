@@ -46,25 +46,24 @@ func (k *FlowKey) Hash() uint64 {
 
 // FlowEntry represents a cached flow entry
 type FlowEntry struct {
-	Key          FlowKey
-	FirstSeen    time.Time
-	LastSeen     time.Time
-	Bytes        uint64
-	Packets      uint64
-	FlowSeq      uint64 // Sequence number for ordering
-	hash         uint64
-	prev, next   *FlowEntry // LRU list pointers
+	Key        FlowKey
+	FirstSeen  time.Time
+	LastSeen   time.Time
+	Bytes      uint64
+	Packets    uint64
+	FlowSeq    uint64     // Sequence number for ordering
+	prev, next *FlowEntry // LRU list pointers
 }
 
 // DedupCache implements a per-exporter deduplication cache with TTL and size bounds
 type DedupCache struct {
 	// Configuration
-	maxSize  int
-	ttl      time.Duration
+	maxSize int
+	ttl     time.Duration
 
 	// Per-exporter caches using sharding to reduce lock contention
-	shards     []*cacheShard
-	numShards  int
+	shards    []*cacheShard
+	numShards int
 
 	// Metrics
 	metrics *DedupMetrics
@@ -77,7 +76,7 @@ type DedupCache struct {
 
 // cacheShard is a single shard of the cache
 type cacheShard struct {
-	entries map[uint64]*FlowEntry
+	entries map[FlowKey]*FlowEntry
 	// LRU list
 	head, tail *FlowEntry
 	size       int
@@ -146,10 +145,10 @@ func NewDedupMetrics(namespace string) *DedupMetrics {
 
 // DedupCacheConfig holds configuration for the dedup cache
 type DedupCacheConfig struct {
-	MaxSize         int            // Maximum total entries across all shards
-	TTL             time.Duration  // Time-to-live for entries
-	NumShards       int            // Number of shards (default: 16)
-	CleanupInterval time.Duration  // How often to run cleanup (default: TTL/4)
+	MaxSize         int           // Maximum total entries across all shards
+	TTL             time.Duration // Time-to-live for entries
+	NumShards       int           // Number of shards (default: 16)
+	CleanupInterval time.Duration // How often to run cleanup (default: TTL/4)
 	Metrics         *DedupMetrics
 }
 
@@ -173,7 +172,7 @@ func NewDedupCache(cfg *DedupCacheConfig) *DedupCache {
 	shards := make([]*cacheShard, cfg.NumShards)
 	for i := range shards {
 		shards[i] = &cacheShard{
-			entries: make(map[uint64]*FlowEntry),
+			entries: make(map[FlowKey]*FlowEntry),
 			maxSize: maxPerShard,
 		}
 	}
@@ -207,19 +206,20 @@ func (c *DedupCache) getShard(hash uint64) *cacheShard {
 // that should be suppressed. Updates the cache entry if not suppressed.
 //
 // Deduplication heuristics:
-// - A flow is considered duplicate if we've seen it within the TTL window
-// - Long-lived flows: We update the entry but don't suppress if the flow
-//   has been active for more than TTL (allows periodic updates through)
-// - We track bytes/packets to detect flow continuations vs true duplicates
+//   - A flow is considered duplicate if we've seen it within the TTL window
+//   - Long-lived flows: We update the entry but don't suppress if the flow
+//     has been active for more than TTL (allows periodic updates through)
+//   - We track bytes/packets to detect flow continuations vs true duplicates
 func (c *DedupCache) CheckDuplicate(key *FlowKey, bytes, packets uint64, flowSeq uint64) (isDuplicate bool) {
 	hash := key.Hash()
 	shard := c.getShard(hash)
+	lookupKey := *key
 
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
 	now := time.Now()
-	entry, exists := shard.entries[hash]
+	entry, exists := shard.entries[lookupKey]
 
 	if exists {
 		// Check if entry has expired
@@ -297,7 +297,6 @@ func (c *DedupCache) CheckDuplicate(key *FlowKey, bytes, packets uint64, flowSeq
 		Bytes:     bytes,
 		Packets:   packets,
 		FlowSeq:   flowSeq,
-		hash:      hash,
 	}
 
 	// Evict if at capacity
@@ -308,7 +307,7 @@ func (c *DedupCache) CheckDuplicate(key *FlowKey, bytes, packets uint64, flowSeq
 		}
 	}
 
-	shard.entries[hash] = entry
+	shard.entries[lookupKey] = entry
 	shard.addToFront(entry)
 	shard.size++
 
@@ -380,7 +379,7 @@ func (s *cacheShard) evictOldest() {
 	}
 
 	// Remove from map
-	delete(s.entries, entry.hash)
+	delete(s.entries, entry.Key)
 	s.size--
 }
 
@@ -427,7 +426,7 @@ func (c *DedupCache) cleanupExpired() {
 				}
 
 				// Remove from map
-				delete(shard.entries, entry.hash)
+				delete(shard.entries, entry.Key)
 				shard.size--
 
 				if c.metrics != nil {
@@ -465,7 +464,7 @@ func (c *DedupCache) Size() int {
 func (c *DedupCache) Clear() {
 	for _, shard := range c.shards {
 		shard.mu.Lock()
-		shard.entries = make(map[uint64]*FlowEntry)
+		shard.entries = make(map[FlowKey]*FlowEntry)
 		shard.head = nil
 		shard.tail = nil
 		shard.size = 0

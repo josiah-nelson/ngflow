@@ -20,14 +20,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	zmq "github.com/pebbe/zmq4"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	zmq "github.com/pebbe/zmq4"
 )
 
 /*
@@ -71,15 +72,16 @@ type ZmqEndpoint struct {
 }
 
 type ZmqDriver struct {
-	endpoints      []*ZmqEndpoint
-	fanoutStrategy FanoutStrategy
-	sourceId       int
-	msgType        MsgFormat
-	compress       bool
-	topic          string
-	lock           *sync.RWMutex
-	rrIndex        atomic.Uint64 // Round-robin index
-	metrics        *ZmqMetrics
+	endpoints       []*ZmqEndpoint
+	activeEndpoints []*ZmqEndpoint
+	fanoutStrategy  FanoutStrategy
+	sourceId        int
+	msgType         MsgFormat
+	compress        bool
+	topic           string
+	lock            *sync.RWMutex
+	rrIndex         atomic.Uint64 // Round-robin index
+	metrics         *ZmqMetrics
 }
 
 // ZmqMetrics holds prometheus metrics for ZMQ transport
@@ -142,6 +144,18 @@ type zmqHeaderV3 struct {
 var messageId uint32 = 0                         // Every ZMQ message we send should have a uniq ID
 const maxMessageId uint32 = math.MaxUint32 - 100 // Wrap around before we hit max uint32
 
+var zlibWriterPool = sync.Pool{
+	New: func() any {
+		return zlib.NewWriter(io.Discard)
+	},
+}
+
+var zlibBufferPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
 func (d *ZmqDriver) Prepare() error {
 	// Ideally the code in transport.RegisterZmq would be in here, but I don't
 	// know how to get the kong CLI flags into this function.
@@ -174,20 +188,14 @@ func (d *ZmqDriver) Init() error {
 		log.Fatal("No ZMQ endpoints could be bound")
 	}
 
-	if d.metrics != nil {
-		d.metrics.EndpointsActive.Set(float64(activeCount))
-	}
+	d.refreshActiveEndpointsLocked()
 
 	// Ensure subscriber connection has time to complete
 	time.Sleep(time.Second)
 	return nil
 }
 
-// selectEndpoint chooses an endpoint based on the configured strategy
-func (d *ZmqDriver) selectEndpoint(key []byte) *ZmqEndpoint {
-	d.lock.RLock()
-	defer d.lock.RUnlock()
-
+func (d *ZmqDriver) refreshActiveEndpointsLocked() {
 	activeEndpoints := make([]*ZmqEndpoint, 0, len(d.endpoints))
 	for _, ep := range d.endpoints {
 		ep.mu.RLock()
@@ -196,6 +204,18 @@ func (d *ZmqDriver) selectEndpoint(key []byte) *ZmqEndpoint {
 		}
 		ep.mu.RUnlock()
 	}
+	d.activeEndpoints = activeEndpoints
+	if d.metrics != nil {
+		d.metrics.EndpointsActive.Set(float64(len(activeEndpoints)))
+	}
+}
+
+// selectEndpoint chooses an endpoint based on the configured strategy
+func (d *ZmqDriver) selectEndpoint(key []byte) *ZmqEndpoint {
+	d.lock.RLock()
+	defer d.lock.RUnlock()
+
+	activeEndpoints := d.activeEndpoints
 
 	if len(activeEndpoints) == 0 {
 		return nil
@@ -226,6 +246,7 @@ func (d *ZmqDriver) Send(key, data []byte) error {
 	start := time.Now()
 	orig_len := uint32(len(data))
 	compressed_len := orig_len
+	var zbuf *bytes.Buffer
 
 	// Select endpoint
 	endpoint := d.selectEndpoint(key)
@@ -241,14 +262,21 @@ func (d *ZmqDriver) Send(key, data []byte) error {
 
 	// Should only compress JSON
 	if d.msgType == JSON && d.compress {
-		var zbuf bytes.Buffer
-		z := zlib.NewWriter(&zbuf)
+		zbuf = zlibBufferPool.Get().(*bytes.Buffer)
+		zbuf.Reset()
+		z := zlibWriterPool.Get().(*zlib.Writer)
+		z.Reset(zbuf)
 		if _, err = z.Write(data); err != nil {
+			zlibWriterPool.Put(z)
+			zlibBufferPool.Put(zbuf)
 			return err
 		}
 		if err = z.Close(); err != nil {
+			zlibWriterPool.Put(z)
+			zlibBufferPool.Put(zbuf)
 			return err
 		}
+		zlibWriterPool.Put(z)
 		// replace data with zlib compressed buffer
 		data = zbuf.Bytes()
 		compressed_len = uint32(len(data))
@@ -334,6 +362,10 @@ func (d *ZmqDriver) Send(key, data []byte) error {
 		log.Tracef("Sent %d bytes of ntop tlv to %s:\n%s", orig_len, endpoint.Address, hex.Dump(data))
 	default:
 		log.Errorf("Sent %d bytes of unknown message type %d", orig_len, d.msgType)
+	}
+
+	if zbuf != nil {
+		zlibBufferPool.Put(zbuf)
 	}
 
 	return err
@@ -464,8 +496,8 @@ func (d *ZmqDriver) GetActiveEndpoints() []string {
 
 // SetEndpointActive sets the active state of an endpoint (for reconnection logic)
 func (d *ZmqDriver) SetEndpointActive(address string, active bool) {
-	d.lock.RLock()
-	defer d.lock.RUnlock()
+	d.lock.Lock()
+	defer d.lock.Unlock()
 
 	for _, ep := range d.endpoints {
 		if ep.Address == address {
@@ -473,18 +505,7 @@ func (d *ZmqDriver) SetEndpointActive(address string, active bool) {
 			ep.Active = active
 			ep.mu.Unlock()
 
-			// Update metrics
-			if d.metrics != nil {
-				activeCount := 0
-				for _, e := range d.endpoints {
-					e.mu.RLock()
-					if e.Active {
-						activeCount++
-					}
-					e.mu.RUnlock()
-				}
-				d.metrics.EndpointsActive.Set(float64(activeCount))
-			}
+			d.refreshActiveEndpointsLocked()
 			return
 		}
 	}

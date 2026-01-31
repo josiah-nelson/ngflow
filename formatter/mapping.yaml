@@ -3,6 +3,11 @@
 formatter:
   key:
     - sampler_address
+    - src_addr
+    - dst_addr
+    - src_port
+    - dst_port
+    - proto
   protobuf: # manual protobuf fields addition
     - name: in_bytes
       index: 200 # keep in sych with NFv9_REMAPPED_IN_BYTES

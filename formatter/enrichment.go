@@ -53,9 +53,12 @@ func enrichInterfaces(exporterIP net.IP, inIf uint32, outIf uint32) (inMeta, out
 	return inMeta, outMeta, inOk, outOk
 }
 
-func classifyFlow(appName string, flow *pb.FlowMessage) (enrich.NDPIClassification, bool) {
+func classifyFlow(appName string, appDescription string, flow *pb.FlowMessage) (enrich.NDPIClassification, bool) {
 	if ndpiClassifier != nil {
 		if classification, ok := ndpiClassifier.Classify(appName); ok {
+			return classification, true
+		}
+		if classification, ok := ndpiClassifier.Classify(appDescription); ok {
 			return classification, true
 		}
 	}
