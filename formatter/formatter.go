@@ -8,7 +8,7 @@ import (
 	"github.com/netsampler/goflow2/v2/format"
 	gf2proto "github.com/netsampler/goflow2/v2/producer/proto"
 	"github.com/sirupsen/logrus"
-	"github.com/synfinatic/netflow2ng/proto"
+	"github.com/josiah-nelson/ngflow/proto"
 	googleproto "google.golang.org/protobuf/proto"
 )
 

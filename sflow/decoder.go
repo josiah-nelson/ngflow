@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/synfinatic/netflow2ng/sampling"
+	"github.com/josiah-nelson/ngflow/vendors/extreme"
+	"github.com/josiah-nelson/ngflow/sampling"
 )
 
 var log *logrus.Logger
@@ -404,7 +405,23 @@ func (d *Decoder) decodeFlowRecord(buf *bytes.Reader) (SFlowFlowRecord, error) {
 
 	// Only parse standard (enterprise=0) records
 	if record.Enterprise != 0 {
-		buf.Seek(int64(record.Length), 1)
+		payload := make([]byte, record.Length)
+		if _, err := buf.Read(payload); err != nil {
+			return record, err
+		}
+		if record.Enterprise == extreme.ExtremeEnterpriseID {
+			parsed, err := extreme.ParseEnterpriseRecord(record.Enterprise, record.Format, payload)
+			if err != nil {
+				if log != nil {
+					log.WithError(err).WithField("enterprise", record.Enterprise).Debug("Failed to parse enterprise record")
+				}
+				record.Data = payload
+			} else {
+				record.Data = parsed
+			}
+		} else {
+			record.Data = payload
+		}
 		return record, nil
 	}
 

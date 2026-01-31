@@ -16,12 +16,13 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/synfinatic/netflow2ng/collector"
-	"github.com/synfinatic/netflow2ng/dedup"
-	localformatters "github.com/synfinatic/netflow2ng/formatter"
-	"github.com/synfinatic/netflow2ng/sampling"
-	"github.com/synfinatic/netflow2ng/sflow"
-	localtransport "github.com/synfinatic/netflow2ng/transport"
+	"github.com/josiah-nelson/ngflow/collector"
+	"github.com/josiah-nelson/ngflow/dedup"
+	"github.com/josiah-nelson/ngflow/enrich"
+	localformatters "github.com/josiah-nelson/ngflow/formatter"
+	"github.com/josiah-nelson/ngflow/sampling"
+	"github.com/josiah-nelson/ngflow/sflow"
+	localtransport "github.com/josiah-nelson/ngflow/transport"
 	"gopkg.in/yaml.v3"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -105,6 +106,22 @@ type CLI struct {
 	DisableUpscaling bool `help:"Disable sampling rate upscaling (use when exporters pre-scale)"`
 	DefaultSampleRate int `help:"Default sampling rate when not reported by exporter" default:"1"`
 
+	// Enrichment Configuration
+	SNMPEnabled      bool          `help:"Enable SNMP interface enrichment" default:"false"`
+	SNMPCommunity    string        `help:"SNMP community string" default:"public"`
+	SNMPPort         uint16        `help:"SNMP port" default:"161"`
+	SNMPVersion      string        `help:"SNMP version (2c only)" default:"2c"`
+	SNMPTimeout      time.Duration `help:"SNMP timeout per request" default:"2s"`
+	SNMPRetries      int           `help:"SNMP retry count" default:"1"`
+	SNMPPollInterval time.Duration `help:"SNMP interface poll interval" default:"5m"`
+	SNMPAutoDiscover bool          `help:"Auto-discover exporters for SNMP polling" default:"true"`
+
+	NDPIEnabled    bool   `help:"Enable nDPI classification from application telemetry" default:"true"`
+	NDPICategories string `help:"Comma-separated list of allowed nDPI categories" default:"sip,video,audio,control,services"`
+
+	L7Enabled    bool   `help:"Enable L7 application classification (port heuristics)" default:"false"`
+	L7Categories string `help:"Comma-separated list of allowed L7 categories" default:"voice,video,audio,control,services,other"`
+
 	// Deduplication Configuration
 	DedupEnabled bool          `help:"Enable flow deduplication" default:"false"`
 	DedupMaxSize int           `help:"Maximum dedup cache size" default:"100000"`
@@ -118,6 +135,21 @@ type CLI struct {
 	LogFormat string `help:"Log format [default|json]" default:"default" enum:"default,json"`
 
 	Version bool `short:"v" help:"Print version and copyright info"`
+}
+
+func parseCSV(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	var out []string
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func LoadMappingYaml() (*protoproducer.ProducerConfig, error) {
@@ -166,6 +198,40 @@ func main() {
 	sampling.SetLogger(log)
 	dedup.SetLogger(log)
 	sflow.SetLogger(log)
+	enrich.SetLogger(log)
+
+	categories := parseCSV(rctx.cli.NDPICategories)
+	localformatters.SetNDPIClassifier(enrich.NewNDPIClassifier(enrich.NDPIConfig{
+		Enabled:           rctx.cli.NDPIEnabled,
+		AllowedCategories: categories,
+	}))
+	localformatters.SetL7Classifier(enrich.NewL7Classifier(enrich.L7Config{
+		Enabled:           rctx.cli.L7Enabled,
+		AllowedCategories: parseCSV(rctx.cli.L7Categories),
+	}))
+	localformatters.SetInterfaceAutoDiscover(rctx.cli.SNMPAutoDiscover)
+
+	var enrichCancel context.CancelFunc
+	if rctx.cli.SNMPEnabled {
+		enrichCtx, cancel := context.WithCancel(context.Background())
+		enrichCancel = cancel
+		cache := enrich.NewInterfaceCache()
+		fetcher := enrich.NewSNMPFetcher(enrich.SNMPFetcherConfig{
+			Community: rctx.cli.SNMPCommunity,
+			Port:      rctx.cli.SNMPPort,
+			Version:   rctx.cli.SNMPVersion,
+			Timeout:   rctx.cli.SNMPTimeout,
+			Retries:   rctx.cli.SNMPRetries,
+		})
+		poller := enrich.NewSNMPPoller(cache, fetcher, rctx.cli.SNMPPollInterval)
+		poller.Start(enrichCtx)
+		localformatters.SetInterfaceEnricher(enrich.NewInterfaceEnrichment(cache, poller))
+		log.WithFields(logrus.Fields{
+			"poll_interval": rctx.cli.SNMPPollInterval,
+			"version":       rctx.cli.SNMPVersion,
+			"port":          rctx.cli.SNMPPort,
+		}).Info("SNMP interface enrichment enabled")
+	}
 
 	// Initialize sampling tracker
 	samplingTracker := sampling.NewSamplingTracker(&sampling.SamplingTrackerConfig{
@@ -198,7 +264,7 @@ func main() {
 		msgType = localtransport.TLV
 		formatter, err = format.FindFormat("ntoptlv")
 		log.Info("Using ntopng TLV format for ZMQ")
-	case "protobuf":
+	case "proto", "protobuf":
 		msgType = localtransport.PBUF
 		log.Fatal("Protobuf not yet supported with goflow2")
 	case "jcompress":
@@ -493,6 +559,10 @@ func main() {
 		if err := sflowCollector.Stop(); err != nil {
 			log.WithError(err).Error("Error stopping sFlow collector")
 		}
+	}
+
+	if enrichCancel != nil {
+		enrichCancel()
 	}
 
 	// stops receivers first, udp sockets will be down
