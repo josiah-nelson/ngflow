@@ -151,6 +151,7 @@ type WorkerPool struct {
 	bytePool     *ByteBufferPool
 	workPool     *WorkItemPool
 	handler      PacketHandler
+	blocking     bool
 	wg           sync.WaitGroup
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -209,13 +210,13 @@ func NewPoolMetrics(namespace string) *PoolMetrics {
 
 // WorkerPoolConfig holds configuration for the worker pool
 type WorkerPoolConfig struct {
-	NumWorkers      int
-	QueueSize       int
-	MaxPacketSize   int
-	Handler         PacketHandler
-	Metrics         *PoolMetrics
-	DropCallback    func(PacketWork)
-	Blocking        bool // If true, block on full queue instead of dropping
+	NumWorkers    int
+	QueueSize     int
+	MaxPacketSize int
+	Handler       PacketHandler
+	Metrics       *PoolMetrics
+	DropCallback  func(PacketWork)
+	Blocking      bool // If true, block on full queue instead of dropping
 }
 
 // NewWorkerPool creates a new worker pool
@@ -232,6 +233,7 @@ func NewWorkerPool(cfg *WorkerPoolConfig) *WorkerPool {
 		bytePool:     NewByteBufferPool(cfg.MaxPacketSize),
 		workPool:     NewWorkItemPool(),
 		handler:      cfg.Handler,
+		blocking:     cfg.Blocking,
 		ctx:          ctx,
 		cancel:       cancel,
 		metrics:      cfg.Metrics,
@@ -315,6 +317,14 @@ func (wp *WorkerPool) Submit(data []byte, length int, remoteAddr net.Addr) bool 
 		Length:     length,
 		RemoteAddr: remoteAddr,
 		ReceivedAt: time.Now(),
+	}
+
+	if wp.blocking {
+		if !wp.ringBuffer.PushBlocking(wp.ctx, work) {
+			wp.bytePool.Put(buf)
+			return false
+		}
+		return true
 	}
 
 	if !wp.ringBuffer.Push(work) {

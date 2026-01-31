@@ -68,7 +68,7 @@ func TestNtopngJSONEnrichment(t *testing.T) {
 	}
 
 	formatter := &NtopngJson{}
-	data, err := formatter.toJSON(extFlow)
+	data, err := formatter.toJSON(extFlow, nil)
 	if err != nil {
 		t.Fatalf("toJSON failed: %v", err)
 	}

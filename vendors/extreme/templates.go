@@ -150,6 +150,15 @@ type SFlowEnterpriseRecord struct {
 	Format     uint32
 	Length     uint32
 	RawData    []byte
+	ClearFlow  *ClearFlowRecord
+}
+
+// ClearFlowRecord captures basic CLEAR-FLOW counters when present.
+// Format details are inferred from observed payloads (rule_id + counter).
+type ClearFlowRecord struct {
+	RuleID  uint32
+	Counter uint64
+	Raw     []byte
 }
 
 // ParseEnterpriseRecord attempts to parse an enterprise-specific sFlow record.
@@ -175,8 +184,13 @@ func ParseEnterpriseRecord(enterprise, format uint32, data []byte) (*SFlowEnterp
 		// Pass through - format not fully documented
 	case 2: // CLEAR-FLOW data (assumed)
 		if len(data) >= 12 {
-			// Minimum: 4 bytes rule ID + 8 bytes counter
-			// Additional fields may follow
+			record.ClearFlow = &ClearFlowRecord{
+				RuleID:  binary.BigEndian.Uint32(data[0:4]),
+				Counter: binary.BigEndian.Uint64(data[4:12]),
+			}
+			if len(data) > 12 {
+				record.ClearFlow.Raw = data[12:]
+			}
 		}
 	default:
 		// Unknown format - store raw data for inspection

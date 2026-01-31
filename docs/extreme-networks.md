@@ -133,6 +133,15 @@ The collector performs lightweight classification using application telemetry (I
 
 Supported categories include voice, video, audio, control/management, and network services.
 
+## CLEAR-FLOW & Application Telemetry
+
+If CLEAR-FLOW rules are configured, Extreme devices may include enterprise-specific sFlow records. The collector currently extracts:
+
+- `extreme.clearflow.rule_id`
+- `extreme.clearflow.counter`
+
+If additional fields are present, they are preserved as raw data for future parsing. Application Telemetry fields map into standard IPFIX application fields and drive nDPI-style classification.
+
 ## Gotchas
 
 - **Template churn**: Extreme templates change when telemetry features are enabled/disabled. Refresh caches after changes.

@@ -7,9 +7,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/sirupsen/logrus"
-	"github.com/josiah-nelson/ngflow/vendors/extreme"
 	"github.com/josiah-nelson/ngflow/sampling"
+	"github.com/josiah-nelson/ngflow/vendors/extreme"
+	"github.com/sirupsen/logrus"
 )
 
 var log *logrus.Logger
@@ -66,15 +66,15 @@ type SFlowSample interface {
 
 // SFlowFlowSample represents a flow sample
 type SFlowFlowSample struct {
-	SequenceNumber   uint32
-	SourceID         uint32
-	SamplingRate     uint32
-	SamplePool       uint32
-	Drops            uint32
-	InputInterface   uint32
-	OutputInterface  uint32
-	NumFlowRecords   uint32
-	FlowRecords      []SFlowFlowRecord
+	SequenceNumber  uint32
+	SourceID        uint32
+	SamplingRate    uint32
+	SamplePool      uint32
+	Drops           uint32
+	InputInterface  uint32
+	OutputInterface uint32
+	NumFlowRecords  uint32
+	FlowRecords     []SFlowFlowRecord
 	// For expanded samples
 	SourceIDType  uint32
 	SourceIDIndex uint32
@@ -94,11 +94,11 @@ type SFlowFlowRecord struct {
 
 // SFlowRawPacketHeader represents a raw packet header record
 type SFlowRawPacketHeader struct {
-	Protocol       uint32 // Header protocol (1 = Ethernet)
-	FrameLength    uint32 // Original frame length
-	Stripped       uint32 // Bytes stripped from packet
-	HeaderLength   uint32
-	HeaderData     []byte
+	Protocol     uint32 // Header protocol (1 = Ethernet)
+	FrameLength  uint32 // Original frame length
+	Stripped     uint32 // Bytes stripped from packet
+	HeaderLength uint32
+	HeaderData   []byte
 	// Parsed from header
 	SrcMAC         net.HardwareAddr
 	DstMAC         net.HardwareAddr
@@ -132,25 +132,25 @@ type SFlowExtendedSwitch struct {
 
 // SFlowExtendedRouter represents extended router data
 type SFlowExtendedRouter struct {
-	NextHop   net.IP
-	SrcMask   uint32
-	DstMask   uint32
+	NextHop net.IP
+	SrcMask uint32
+	DstMask uint32
 }
 
 // FlowMessage represents a decoded flow that can be passed to formatters
 type FlowMessage struct {
 	// Core flow identification
-	SrcAddr    net.IP
-	DstAddr    net.IP
-	SrcPort    uint16
-	DstPort    uint16
-	Protocol   uint8
-	EtherType  uint16
-	IPVersion  uint8
+	SrcAddr   net.IP
+	DstAddr   net.IP
+	SrcPort   uint16
+	DstPort   uint16
+	Protocol  uint8
+	EtherType uint16
+	IPVersion uint8
 
 	// Statistics (will be upscaled by sampling rate)
-	Bytes      uint64
-	Packets    uint64
+	Bytes   uint64
+	Packets uint64
 
 	// Sampling info
 	SamplingRate uint32
@@ -164,10 +164,10 @@ type FlowMessage struct {
 	OutIf uint32
 
 	// Layer 2
-	SrcMAC   uint64
-	DstMAC   uint64
-	SrcVLAN  uint32
-	DstVLAN  uint32
+	SrcMAC  uint64
+	DstMAC  uint64
+	SrcVLAN uint32
+	DstVLAN uint32
 
 	// Layer 3
 	ToS            uint8
@@ -188,6 +188,9 @@ type FlowMessage struct {
 	SamplerAddress net.IP
 	SourceID       uint32
 	SequenceNumber uint32
+
+	// Vendor-specific extras (CLEAR-FLOW, telemetry, etc.)
+	Extras map[string]interface{}
 }
 
 // Decoder handles sFlow v5 decoding
@@ -676,6 +679,7 @@ func (d *Decoder) flowSampleToMessage(dg *SFlowDatagram, sample *SFlowFlowSample
 	var rawHeader *SFlowRawPacketHeader
 	var extSwitch *SFlowExtendedSwitch
 	var extRouter *SFlowExtendedRouter
+	var extras map[string]interface{}
 
 	for _, record := range sample.FlowRecords {
 		switch data := record.Data.(type) {
@@ -685,6 +689,18 @@ func (d *Decoder) flowSampleToMessage(dg *SFlowDatagram, sample *SFlowFlowSample
 			extSwitch = data
 		case *SFlowExtendedRouter:
 			extRouter = data
+		case *extreme.SFlowEnterpriseRecord:
+			if data.Enterprise == extreme.ExtremeEnterpriseID {
+				if extras == nil {
+					extras = make(map[string]interface{}, 4)
+				}
+				extras["extreme.enterprise.format"] = data.Format
+				extras["extreme.enterprise.length"] = data.Length
+				if data.ClearFlow != nil {
+					extras["extreme.clearflow.rule_id"] = data.ClearFlow.RuleID
+					extras["extreme.clearflow.counter"] = data.ClearFlow.Counter
+				}
+			}
 		}
 	}
 
@@ -731,6 +747,10 @@ func (d *Decoder) flowSampleToMessage(dg *SFlowDatagram, sample *SFlowFlowSample
 		msg.NextHop = extRouter.NextHop
 		msg.SrcNet = extRouter.SrcMask
 		msg.DstNet = extRouter.DstMask
+	}
+
+	if len(extras) > 0 {
+		msg.Extras = extras
 	}
 
 	return msg

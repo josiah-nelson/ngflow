@@ -2,16 +2,17 @@ package sflow
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-	flowpb "github.com/netsampler/goflow2/v2/pb"
 	"github.com/josiah-nelson/ngflow/collector"
 	"github.com/josiah-nelson/ngflow/sampling"
+	flowpb "github.com/netsampler/goflow2/v2/pb"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // SFlowCollector handles sFlow v5 packet collection
@@ -26,7 +27,9 @@ type SFlowCollector struct {
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
 	flowHandler     FlowHandler
+	rawHandler      func([]byte)
 	metrics         *SFlowMetrics
+	exporters       *collector.ExporterRegistry
 }
 
 // FlowHandler is called for each decoded sFlow message
@@ -79,14 +82,16 @@ func NewSFlowMetrics(namespace string) *SFlowMetrics {
 
 // SFlowCollectorConfig holds configuration for the sFlow collector
 type SFlowCollectorConfig struct {
-	ListenAddr      string
-	ListenPort      int
-	NumWorkers      int
-	QueueSize       int
-	SamplingTracker *sampling.SamplingTracker
-	FlowHandler     FlowHandler
-	Metrics         *SFlowMetrics
-	PoolMetrics     *collector.PoolMetrics
+	ListenAddr         string
+	ListenPort         int
+	NumWorkers         int
+	QueueSize          int
+	SamplingTracker    *sampling.SamplingTracker
+	FlowHandler        FlowHandler
+	RawDatagramHandler func([]byte)
+	Metrics            *SFlowMetrics
+	PoolMetrics        *collector.PoolMetrics
+	ExporterRegistry   *collector.ExporterRegistry
 }
 
 // NewSFlowCollector creates a new sFlow collector
@@ -101,7 +106,9 @@ func NewSFlowCollector(cfg *SFlowCollectorConfig) *SFlowCollector {
 		ctx:             ctx,
 		cancel:          cancel,
 		flowHandler:     cfg.FlowHandler,
+		rawHandler:      cfg.RawDatagramHandler,
 		metrics:         cfg.Metrics,
+		exporters:       cfg.ExporterRegistry,
 	}
 
 	// Create worker pool
@@ -183,6 +190,21 @@ func (c *SFlowCollector) receiveLoop() {
 			c.metrics.BytesReceived.Add(float64(n))
 		}
 
+		if c.rawHandler != nil {
+			payload := append([]byte(nil), buf[:n]...)
+			c.rawHandler(payload)
+		}
+
+		if c.exporters != nil {
+			sourceID, ok := parseSFlowSubAgentID(buf[:n])
+			if !ok {
+				sourceID = 0
+			}
+			if remoteAddr != nil {
+				c.exporters.RecordPacket(remoteAddr.IP, sourceID, n)
+			}
+		}
+
 		// Submit to worker pool
 		c.workerPool.Submit(buf[:n], n, remoteAddr)
 	}
@@ -251,36 +273,66 @@ func (c *SFlowCollector) GetQueueDepth() int {
 	return c.workerPool.QueueLen()
 }
 
+func parseSFlowSubAgentID(payload []byte) (uint32, bool) {
+	if len(payload) < 16 {
+		return 0, false
+	}
+	offset := 0
+	version := binary.BigEndian.Uint32(payload[offset : offset+4])
+	offset += 4
+	if version != SFlowVersion5 {
+		return 0, false
+	}
+	if len(payload) < offset+4 {
+		return 0, false
+	}
+	addrType := binary.BigEndian.Uint32(payload[offset : offset+4])
+	offset += 4
+	switch addrType {
+	case 1:
+		offset += 4
+	case 2:
+		offset += 16
+	default:
+		return 0, false
+	}
+	if len(payload) < offset+4 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint32(payload[offset : offset+4]), true
+}
+
 // ConvertToGoflowMessage converts our sFlow message to goflow2's FlowMessage format
 // This allows reuse of the existing formatters
 func ConvertToGoflowMessage(msg *FlowMessage) *flowpb.FlowMessage {
 	fm := &flowpb.FlowMessage{
-		Type:             flowpb.FlowMessage_SFLOW_5,
-		TimeFlowStartNs:  msg.TimeFlowStartNs,
-		TimeFlowEndNs:    msg.TimeFlowEndNs,
-		Bytes:            msg.Bytes,
-		Packets:          msg.Packets,
-		SrcPort:          uint32(msg.SrcPort),
-		DstPort:          uint32(msg.DstPort),
-		Proto:            uint32(msg.Protocol),
-		Etype:            uint32(msg.EtherType),
-		InIf:             msg.InIf,
-		OutIf:            msg.OutIf,
-		SrcMac:           msg.SrcMAC,
-		DstMac:           msg.DstMAC,
-		SrcVlan:          msg.SrcVLAN,
-		DstVlan:          msg.DstVLAN,
-		IpTos:            uint32(msg.ToS),
-		IpTtl:            uint32(msg.TTL),
-		TcpFlags:         uint32(msg.TCPFlags),
-		IcmpType:         uint32(msg.IcmpType),
-		IcmpCode:         uint32(msg.IcmpCode),
-		FragmentOffset:   uint32(msg.FragmentOffset),
-		FragmentId:       msg.FragmentId,
-		Ipv6FlowLabel:    msg.IPv6FlowLabel,
-		SrcNet:           msg.SrcNet,
-		DstNet:           msg.DstNet,
-		SamplingRate:     uint64(msg.SamplingRate),
+		Type:                flowpb.FlowMessage_SFLOW_5,
+		TimeFlowStartNs:     msg.TimeFlowStartNs,
+		TimeFlowEndNs:       msg.TimeFlowEndNs,
+		Bytes:               msg.Bytes,
+		Packets:             msg.Packets,
+		SrcPort:             uint32(msg.SrcPort),
+		DstPort:             uint32(msg.DstPort),
+		Proto:               uint32(msg.Protocol),
+		Etype:               uint32(msg.EtherType),
+		InIf:                msg.InIf,
+		OutIf:               msg.OutIf,
+		SrcMac:              msg.SrcMAC,
+		DstMac:              msg.DstMAC,
+		SrcVlan:             msg.SrcVLAN,
+		DstVlan:             msg.DstVLAN,
+		IpTos:               uint32(msg.ToS),
+		IpTtl:               uint32(msg.TTL),
+		TcpFlags:            uint32(msg.TCPFlags),
+		IcmpType:            uint32(msg.IcmpType),
+		IcmpCode:            uint32(msg.IcmpCode),
+		FragmentOffset:      uint32(msg.FragmentOffset),
+		FragmentId:          msg.FragmentId,
+		Ipv6FlowLabel:       msg.IPv6FlowLabel,
+		SrcNet:              msg.SrcNet,
+		DstNet:              msg.DstNet,
+		SamplingRate:        uint64(msg.SamplingRate),
+		ObservationDomainId: msg.SourceID,
 	}
 
 	// Set addresses

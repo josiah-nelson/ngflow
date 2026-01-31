@@ -2,8 +2,13 @@ package extreme
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
+
+func contains(haystack, needle string) bool {
+	return strings.Contains(haystack, needle)
+}
 
 // TestExtremeVendorTracker tests device tracking functionality
 func TestExtremeVendorTracker(t *testing.T) {
@@ -245,33 +250,33 @@ func TestFabricEngineLimitations(t *testing.T) {
 // TestInterpretObservationDomain tests observation domain interpretation
 func TestInterpretObservationDomain(t *testing.T) {
 	tests := []struct {
-		name       string
-		deviceType DeviceType
-		domainID   uint32
+		name         string
+		deviceType   DeviceType
+		domainID     uint32
 		wantContains string
 	}{
 		{
-			name:       "FabricEngine default",
-			deviceType: DeviceTypeFabricEngine,
-			domainID:   0,
+			name:         "FabricEngine default",
+			deviceType:   DeviceTypeFabricEngine,
+			domainID:     0,
 			wantContains: "GlobalRouter",
 		},
 		{
-			name:       "FabricEngine VRF",
-			deviceType: DeviceTypeFabricEngine,
-			domainID:   100,
+			name:         "FabricEngine VRF",
+			deviceType:   DeviceTypeFabricEngine,
+			domainID:     100,
 			wantContains: "VRF",
 		},
 		{
-			name:       "SwitchEngine default",
-			deviceType: DeviceTypeSwitchEngine,
-			domainID:   0,
+			name:         "SwitchEngine default",
+			deviceType:   DeviceTypeSwitchEngine,
+			domainID:     0,
 			wantContains: "primary",
 		},
 		{
-			name:       "SwitchEngine stack member",
-			deviceType: DeviceTypeSwitchEngine,
-			domainID:   2,
+			name:         "SwitchEngine stack member",
+			deviceType:   DeviceTypeSwitchEngine,
+			domainID:     2,
 			wantContains: "stack member",
 		},
 	}

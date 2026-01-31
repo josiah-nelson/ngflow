@@ -2,6 +2,7 @@ package sampling
 
 import (
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -72,11 +73,11 @@ type ExporterSamplingKey struct {
 
 // SamplingTracker tracks sampling rates per exporter
 type SamplingTracker struct {
-	exporters     map[ExporterSamplingKey]*SamplingInfo
-	mu            sync.RWMutex
-	defaultRate   uint32 // Default rate if not known (1 = no sampling)
-	scalingEnabled bool  // Whether to apply scaling
-	metrics       *SamplingMetrics
+	exporters      map[ExporterSamplingKey]*SamplingInfo
+	mu             sync.RWMutex
+	defaultRate    uint32 // Default rate if not known (1 = no sampling)
+	scalingEnabled bool   // Whether to apply scaling
+	metrics        *SamplingMetrics
 }
 
 // SamplingMetrics holds prometheus metrics for sampling tracking
@@ -119,8 +120,8 @@ func NewSamplingMetrics(namespace string) *SamplingMetrics {
 
 // SamplingTrackerConfig holds configuration for the sampling tracker
 type SamplingTrackerConfig struct {
-	DefaultRate    uint32          // Default sampling rate (1 = no sampling)
-	ScalingEnabled bool            // Whether to apply upscaling
+	DefaultRate    uint32 // Default sampling rate (1 = no sampling)
+	ScalingEnabled bool   // Whether to apply upscaling
 	Metrics        *SamplingMetrics
 }
 
@@ -171,14 +172,14 @@ func (t *SamplingTracker) UpdateSamplingRate(ip net.IP, observationDom uint32, r
 	if t.metrics != nil {
 		labels := prometheus.Labels{
 			"exporter_ip":        ip.String(),
-			"observation_domain": string(rune(observationDom)),
+			"observation_domain": strconv.FormatUint(uint64(observationDom), 10),
 			"source":             source.String(),
 		}
 		t.metrics.SamplingRate.With(labels).Set(float64(rate))
 
 		srcLabels := prometheus.Labels{
 			"exporter_ip":        ip.String(),
-			"observation_domain": string(rune(observationDom)),
+			"observation_domain": strconv.FormatUint(uint64(observationDom), 10),
 		}
 		t.metrics.SamplingInfoSource.With(srcLabels).Set(float64(source))
 	}

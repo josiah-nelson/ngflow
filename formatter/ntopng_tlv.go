@@ -35,8 +35,8 @@ import (
 	"net"
 	"reflect"
 
-	"github.com/netsampler/goflow2/v2/decoders/netflow"
 	"github.com/josiah-nelson/ngflow/proto"
+	"github.com/netsampler/goflow2/v2/decoders/netflow"
 )
 
 // Taken From ntop nDPI's ndpi_typedefs.h. We're only using a subset.
@@ -77,18 +77,12 @@ func (d *NtopngTlv) Init() error {
 }
 
 func (d *NtopngTlv) Format(data interface{}) ([]byte, []byte, error) {
-	// The Transport might use "key", but we don't care about it here.
-	var key []byte
-	if dataIf, ok := data.(interface{ Key() []byte }); ok {
-		key = dataIf.Key()
-	}
-
-	extFlowMsg, err := castToExtendedFlowMsg(data)
+	key, extFlowMsg, _, extras, err := extractFlow(data)
 	if err != nil {
 		return key, nil, errors.New("skipping non-ExtendedFlowMessage")
 	}
 
-	tdata, err := d.toTLV(extFlowMsg)
+	tdata, err := d.toTLV(extFlowMsg, extras)
 	if err != nil {
 		return key, nil, err
 	}
@@ -101,7 +95,7 @@ func (d *NtopngTlv) Format(data interface{}) ([]byte, []byte, error) {
  * ExtendedFlowMessage is our protobuf message that contains the remapped IN/OUT fields
  * using Formatter.MappingYamlStr
  */
-func (d *NtopngTlv) toTLV(extFlow *proto.ExtendedFlowMessage) ([]byte, error) {
+func (d *NtopngTlv) toTLV(extFlow *proto.ExtendedFlowMessage, extras map[string]interface{}) ([]byte, error) {
 	ip6 := make(net.IP, net.IPv6len)
 	ip4 := make(net.IP, net.IPv4len)
 	hwaddr := make(net.HardwareAddr, 6)
@@ -112,15 +106,17 @@ func (d *NtopngTlv) toTLV(extFlow *proto.ExtendedFlowMessage) ([]byte, error) {
 	// goflow2 FlowMessage protobuf is embedded in ExtendedFlowMessage
 	baseFlow := extFlow.BaseFlow
 
+	inBytes, inPackets, outBytes, outPackets := resolveCounters(extFlow)
+
 	// Stats + direction
 	// goflow2 only supports unidirectional flows. There is no Direction field and only one
 	// Bytes/Packets field. Data flow is always Src -> Dst
 	items = append(items,
 		ndpiItem{Key: netflow.NFV9_FIELD_DIRECTION, Value: 0},
-		ndpiItem{Key: netflow.NFV9_FIELD_IN_BYTES, Value: extFlow.InBytes},
-		ndpiItem{Key: netflow.NFV9_FIELD_IN_PKTS, Value: extFlow.InPackets},
-		ndpiItem{Key: netflow.NFV9_FIELD_OUT_BYTES, Value: extFlow.OutBytes},
-		ndpiItem{Key: netflow.NFV9_FIELD_OUT_PKTS, Value: extFlow.OutPackets},
+		ndpiItem{Key: netflow.NFV9_FIELD_IN_BYTES, Value: inBytes},
+		ndpiItem{Key: netflow.NFV9_FIELD_IN_PKTS, Value: inPackets},
+		ndpiItem{Key: netflow.NFV9_FIELD_OUT_BYTES, Value: outBytes},
+		ndpiItem{Key: netflow.NFV9_FIELD_OUT_PKTS, Value: outPackets},
 	)
 	// Goflow2 protobuf provides time in ns, but it ntopng expects time in seconds.
 	items = append(items,
@@ -235,12 +231,13 @@ func (d *NtopngTlv) toTLV(extFlow *proto.ExtendedFlowMessage) ([]byte, error) {
 		items = append(items, ndpiItem{Key: netflow.IPFIX_FIELD_applicationDescription, Value: extFlow.ApplicationDescription})
 	}
 
-	if classification, ok := classifyFlow(extFlow.ApplicationName, baseFlow); ok {
+	if classification, ok := classifyFlow(extFlow.ApplicationName, extFlow.ApplicationDescription, baseFlow); ok {
 		items = append(items, ndpiItem{Key: "ndpi.protocol", Value: classification.Protocol})
 		items = append(items, ndpiItem{Key: "ndpi.category", Value: classification.Category})
 		if classification.Confidence > 0 {
 			items = append(items, ndpiItem{Key: "ndpi.confidence", Value: classification.Confidence})
 		}
+		items = appendQoSMetrics(items, classification, inBytes+outBytes, inPackets+outPackets, baseFlow.TimeFlowStartNs, baseFlow.TimeFlowEndNs)
 	}
 
 	inMeta, outMeta, inOk, outOk := enrichInterfaces(exporterIP, baseFlow.InIf, baseFlow.OutIf)
@@ -265,6 +262,10 @@ func (d *NtopngTlv) toTLV(extFlow *proto.ExtendedFlowMessage) ([]byte, error) {
 		if outMeta.SpeedBps > 0 {
 			items = append(items, ndpiItem{Key: "out_ifSpeed", Value: outMeta.SpeedBps})
 		}
+	}
+
+	if len(extras) > 0 {
+		items = appendExtras(items, extras)
 	}
 
 	// Serialize and make a flow record.

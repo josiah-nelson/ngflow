@@ -41,6 +41,20 @@ ntopng is a free/commercial network traffic analysis console suitable for a vari
 - **Hash-based distribution** (exporter + 5-tuple) for flow affinity
 - **Round-robin distribution** for load balancing
 
+### Output Backends
+- **Kafka** producer for flow JSON/TLV
+- **ElasticSearch** bulk indexing (NDJSON)
+- **Syslog** RFC5424 forwarding
+
+> **Note:** ElasticSearch and Syslog outputs require `--format=json` or `--format=jcompress`.
+
+### Protocol Proxy & Conversion
+- **Raw NetFlow/IPFIX proxy** for packet mirroring
+- **Raw sFlow proxy** for external collectors
+- **sFlow → NetFlow v9** conversion for legacy tooling
+
+> **sFlow → NetFlow v9 limitation:** only IPv4 records are exported; IPv6 sFlow samples are skipped.
+
 ### Deduplication
 - **Per-exporter dedup cache** with configurable TTL and size bounds
 - **Heuristics** to avoid false positives on long-lived flows
@@ -52,6 +66,7 @@ ntopng is a free/commercial network traffic analysis console suitable for a vari
 - **SNMP interface metadata** - ifName, ifAlias, ifSpeed mapping from ifIndex
 - **Application telemetry classification** - nDPI-style categories from IPFIX app telemetry
 - **L7 port heuristics** - SIP, RTP/RTCP, DNS, DHCP, SSH, SNMP, NTP (no payload inspection)
+- **VoIP/QoS metrics** - bitrate, PPS, avg packet size, codec guess for voice/audio flows
 
 ## Installation
 
@@ -107,7 +122,37 @@ ZMQ Configuration:
       --fanout-strategy="hash"    ZMQ fan-out strategy [hash|round-robin]
       --topic="flow"              ZMQ Topic
       --source-id=0               NetFlow SourceId (0-255)
-  -f, --format="tlv"              Output format [tlv|json|jcompress|proto]
+  -f, --format="tlv"              Output format [tlv|json|jcompress]
+      --outputs="zmq"             Comma-separated outputs: zmq,kafka,elastic,syslog
+
+Kafka Output Configuration:
+      --kafka-brokers=STRING      Kafka brokers (comma-separated)
+      --kafka-topic=STRING        Kafka topic for flow messages
+      --kafka-batch-bytes=INT     Kafka batch size in bytes
+      --kafka-batch-timeout=DUR   Kafka batch timeout
+      --kafka-required-acks=INT   Kafka required acks (-1 all, 0 none, 1 leader)
+      --kafka-compression=STRING  Kafka compression [none|gzip|snappy|lz4|zstd]
+
+Elastic Output Configuration:
+      --elastic-url=STRING        ElasticSearch base URL
+      --elastic-index=STRING      ElasticSearch index name
+      --elastic-bulk-size=INT     ElasticSearch bulk size (documents per flush)
+      --elastic-bulk-interval=DUR ElasticSearch bulk flush interval
+      --elastic-queue-size=INT    ElasticSearch queue size
+      --elastic-username=STRING   ElasticSearch username
+      --elastic-password=STRING   ElasticSearch password
+      --elastic-api-key=STRING    ElasticSearch API key (base64)
+      --elastic-insecure          Skip TLS verification for ElasticSearch
+
+Syslog Output Configuration:
+      --syslog-addr=STRING        Syslog destination address (host:port)
+      --syslog-network="udp"      Syslog network [udp|tcp]
+      --syslog-facility=INT       Syslog facility (0-23)
+      --syslog-severity=INT       Syslog severity (0-7)
+      --syslog-hostname=STRING    Syslog hostname override
+      --syslog-app-name=STRING    Syslog app name
+      --syslog-procid=STRING      Syslog procid
+      --syslog-msgid=STRING       Syslog msgid
 
 Sampling Configuration:
       --disable-upscaling         Disable sampling rate upscaling (use when exporters pre-scale)
@@ -141,6 +186,20 @@ Deduplication Configuration:
 Queue Configuration:
       --queue-size=1000000        Packet queue size
 
+Proxy / Conversion:
+      --proxy-netflow=STRING      Forward raw NetFlow/IPFIX datagrams to host:port list
+      --proxy-sflow=STRING        Forward raw sFlow datagrams to host:port list
+      --sflow-to-netflow=STRING   Export sFlow as NetFlow v9 to host:port list
+      --sflow-template-id=INT     NetFlow v9 template ID for sFlow conversion
+      --sflow-template-refresh=DUR
+                                  NetFlow v9 template refresh interval
+
+Syslog Flow Collection:
+      --syslog-flow-listen=ADDR   Syslog flow listen address:port (empty to disable)
+      --syslog-flow-network="udp" Syslog flow network [udp|tcp]
+      --syslog-flow-format="fortinet"
+                                  Syslog flow format [fortinet|json]
+
 Logging:
   -l, --log-level="info"          Log level [error|warn|info|debug|trace]
       --log-format="default"      Log format [default|json]
@@ -161,6 +220,33 @@ netflow2ng -a 0.0.0.0:2055 -z tcp://*:5556
 ```bash
 netflow2ng -a 0.0.0.0:2055 --sflow-listen 0.0.0.0:6343 -z tcp://*:5556
 ```
+
+#### Kafka + Elastic Fan-out
+
+```bash
+netflow2ng -a 0.0.0.0:2055 \
+  --format json \
+  --outputs zmq,kafka,elastic \
+  --kafka-brokers localhost:9092 --kafka-topic flows \
+  --elastic-url http://localhost:9200 --elastic-index netflow2ng-flows
+```
+
+#### Syslog Flow Collection (Fortinet)
+
+```bash
+netflow2ng --syslog-flow-listen 0.0.0.0:5514 --syslog-flow-format fortinet
+```
+
+#### Syslog Flow Collection (JSON)
+
+```bash
+netflow2ng --syslog-flow-listen 0.0.0.0:5514 --syslog-flow-format json
+```
+
+### Syslog Flow Parsing Notes
+
+Fortinet format expects `key=value` fields (e.g., `srcip`, `dstip`, `srcport`, `dstport`, `proto`, `sentbyte`, `rcvdbyte`, `sentpkt`, `rcvdpkt`, `duration`, `eventtime`).
+JSON format extracts common fields (e.g., `srcip`, `dstip`, `srcport`, `dstport`, `protocol`, `bytes`, `packets`, `start`, `end`, `duration`, `@timestamp`) and stores remaining fields under `syslog.*`.
 
 #### Multi-Endpoint Fan-out (Hash-based)
 
@@ -258,6 +344,10 @@ netflow2ng exposes several HTTP endpoints on the metrics port (default 8080):
 | `/templates` | NetFlow/IPFIX template cache (JSON) |
 | `/sampling` | Per-exporter sampling rate information (JSON) |
 | `/dedup` | Deduplication cache statistics (JSON, if enabled) |
+| `/exporters` | Exporter statistics snapshot (JSON) |
+
+Notes:
+- `/exporters` reports UDP packet/byte counts from raw datagrams, while flow counts are post-dedup decoded flows.
 
 ## Prometheus Metrics
 
