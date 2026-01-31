@@ -423,13 +423,22 @@ func parseKeyValuePairs(input string) map[string]string {
 		if input[i] == '"' {
 			i++
 			startVal := i
-			for i < len(input) && input[i] != '"' {
-				if input[i] == '\\' && i+1 < len(input) {
-					i += 2
-					continue
-				}
-				i++
-			}
+        var sb strings.Builder
+        i++ // skip opening quote
+        for i < len(input) {
+            if input[i] == '"' {
+                i++ // skip closing quote
+                break
+            }
+            if input[i] == '\\' && i+1 < len(input) {
+                sb.WriteByte(input[i+1])
+                i += 2
+            } else {
+                sb.WriteByte(input[i])
+                i++
+            }
+        }
+        value = sb.String()
 			value = input[startVal:i]
 			if i < len(input) && input[i] == '"' {
 				i++
